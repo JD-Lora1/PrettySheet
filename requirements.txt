@@ -1,0 +1,8 @@
+pandas
+openpyxl
+fastapi
+uvicorn
+psutil
+streamlit
+python-multipart
+uvicorn[standard]
