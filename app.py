@@ -1,136 +1,168 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from streamlit_sortables import sort_items
-# Importaciones directas (asumiendo que están en la misma carpeta o subcarpeta core)
-from core.formatter_pipeline import ExcelPipeline 
 
-# Configuración de página
-st.set_page_config(page_title="PrettySheet", layout="wide")
+# Importación del motor de procesamiento
+try:
+    from core.formatter_pipeline import ExcelPipeline 
+except ImportError:
+    ExcelPipeline = None
+
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(
+    page_title="PrettySheet | Profesionales en Excel",
+    page_icon="🎨",
+    layout="wide"
+)
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("Configuración")
+    st.header("⚙️ Configuración Global")
     apply_styles = st.checkbox("Aplicar Estilos", value=True)
     adjust_widths = st.checkbox("Ajustar Anchos", value=True)
-    reorder_cols = st.checkbox("Reordenar Columnas", value=True)
+    
+    st.divider()
+    st.markdown("### 🎨 Colores Predeterminados")
+    default_bg = st.color_picker("Fondo de cabecera base", "#1F4E78")
+    default_txt = st.color_picker("Texto de cabecera base", "#FFFFFF")
     
     st.divider()
     st.info("🚀 **Local-First**: Tus datos se procesan en tu navegador y nunca viajan a un servidor.")
 
 # --- CUERPO PRINCIPAL ---
-st.title("PrettySheet: Procesador Local de Excel")
-st.caption("Dale un acabado profesional a tus Excels en segundos.")
+st.title("🎨 PrettySheet")
+st.caption("Ajusta el orden y los colores de cada columna de forma independiente.")
 
-uploaded_file = st.file_uploader("Arrastra tu archivo Excel (.xlsx)", type="xlsx")
+uploaded_file = st.file_uploader("Carga tu archivo Excel (.xlsx)", type="xlsx")
 
-st.subheader("Personalización de Estilo")
-col1, col2 = st.columns(2)
-
-with col1:
-    primary_color = st.color_picker("Color de Encabezado", "#1F4E78")
-with col2:
-    font_color = st.color_picker("Color de Texto", "#FFFFFF")
-
-# Previsualización rápida con Markdown/HTML
-st.markdown(
-    f"""
-    <div style="
-        background-color: {primary_color}; 
-        color: {font_color}; 
-        padding: 10px; 
-        border-radius: 5px; 
-        text-align: center;
-        font-weight: bold;
-        border: 1px solid #ddd;
-    ">
-        VISTA PREVIA DEL ENCABEZADO
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
-
-if uploaded_file and ExcelPipeline:
-    # 1. PRIMERO: Leer el archivo para obtener los headers
-    file_bytes = BytesIO(uploaded_file.getvalue())
-    file_bytes.seek(0)
-    df_headers = pd.read_excel(file_bytes, nrows=0)
-    headers = list(df_headers.columns)
-
-    # 2. SEGUNDO: Configuración de Colores (Ahora que ya tenemos 'headers')
-    st.subheader("Configuración de Columnas")
-    column_configs = {}
-
-    with st.expander("🎨 Personalizar colores por columna"):
-        cols_ui = st.columns(3) 
-        for i, col_name in enumerate(headers):
-            with cols_ui[i % 3]:
-                # Usamos un color por defecto inicial
-                color = st.color_picker(f"Color: {col_name}", "#1F4E78", key=f"cp_{col_name}")
-                column_configs[col_name] = {"bg_color": color.lstrip('#')}
-
-    # 3. TERCERO: Reordenar columnas
-    column_order = None
-    if reorder_cols:
-        st.subheader("Arrastra para reordenar las columnas:")
+if uploaded_file:
+    # 1. GESTIÓN DE ESTADO: Cargar datos iniciales
+    if 'column_data' not in st.session_state or st.session_state.get('current_file') != uploaded_file.name:
+        file_bytes = BytesIO(uploaded_file.getvalue())
+        df_headers = pd.read_excel(file_bytes, nrows=0)
         
-        # --- TRUCO CSS PARA COLORES DINÁMICOS ---
-        # Esto genera estilos CSS para cada item del sortable basado en tus color_pickers
-        css_colors = ""
-        for col_name, config in column_configs.items():
-            bg = f"#{config['bg_color']}"
-            # Usamos selectores de texto para pintar las cajas del sortable
-            css_colors += f"""
-            div[data-testid="stMarkdownContainer"] p:contains("{col_name}") {{
-                background-color: {bg} !important;
-                color: {font_color} !important;
-                padding: 5px 10px;
-                border-radius: 5px;
-            }}
-            """
-        st.markdown(f"<style>{css_colors}</style>", unsafe_allow_html=True)
-        
-        column_order = sort_items(headers, direction="vertical", key="sortable_col_order")
-    else:
-        # Si no reordenan, el orden es el original de los headers
-        column_order = headers
+        # Inicializamos el estado con los colores base del sidebar
+        st.session_state.column_data = [
+            {"name": col, "bg": default_bg, "txt": default_txt} for col in df_headers.columns
+        ]
+        st.session_state.current_file = uploaded_file.name
 
-    # 4. CUARTO: Procesamiento
-    if st.button("Procesar y Previsualizar"):
-        with st.spinner("Procesando..."):
-            file_bytes.seek(0)
+    # --- PANEL DE PERSONALIZACIÓN ---
+    st.subheader("🛠️ Configuración de Columnas")
+    st.write("Cambia el orden con ⬆️ ⬇️ y elige colores específicos para cada encabezado.")
+
+    # Encabezados de la tabla de configuración
+    h1, h2, h3, h4 = st.columns([1, 4, 1.5, 1.5])
+    with h1: st.write("**Orden**")
+    with h2: st.write("**Columna (Vista Previa)**")
+    with h3: st.write("**Fondo**")
+    with h4: st.write("**Texto**")
+    st.divider()
+
+    # 2. RENDERIZADO DE FILAS DINÁMICAS
+    for i, col_info in enumerate(st.session_state.column_data):
+        with st.container():
+            c1, c2, c3, c4 = st.columns([1, 4, 1.5, 1.5])
             
-            # LIMPIEZA CRÍTICA: Asegurar que no haya '#' en ningún color
-            clean_configs = {
-                col: {"bg_color": cfg["bg_color"].replace("#", "")} 
-                for col, cfg in column_configs.items()
-            }
-            clean_font_color = font_color.replace("#", "") # <--- Esto faltaba
-
-            pipeline = ExcelPipeline(
-                column_order=column_order,
-                column_configs=clean_configs,
-                font_color=clean_font_color
-            )
+            with c1:
+                # Controles de movimiento
+                up = st.button("⬆️", key=f"up_{i}", disabled=(i == 0))
+                down = st.button("⬇️", key=f"down_{i}", disabled=(i == len(st.session_state.column_data)-1))
                 
-            result_buffer = pipeline.process(file_bytes)
-            result_buffer.seek(0)
+                if up:
+                    st.session_state.column_data[i], st.session_state.column_data[i-1] = \
+                        st.session_state.column_data[i-1], st.session_state.column_data[i]
+                    st.rerun()
+                if down:
+                    st.session_state.column_data[i], st.session_state.column_data[i+1] = \
+                        st.session_state.column_data[i+1], st.session_state.column_data[i]
+                    st.rerun()
+
+            with c2:
+                # Vista previa alineada
+                st.markdown(f"""
+                    <div style="
+                        background-color: {col_info['bg']}; 
+                        color: {col_info['txt']}; 
+                        padding: 10px; 
+                        border-radius: 6px; 
+                        text-align: center;
+                        font-weight: bold;
+                        border: 1px solid #ddd;
+                        font-family: sans-serif;
+                        font-size: 14px;
+                    ">
+                        {col_info['name']}
+                    </div>
+                """, unsafe_allow_html=True)
             
-            # Vista previa
-            df_preview = pd.read_excel(result_buffer)
-            st.subheader("Vista previa (primeras 5 filas):")
-            st.dataframe(df_preview.head(5), use_container_width=True)
+            with c3:
+                # Selector de fondo (sin texto de etiqueta para mayor limpieza)
+                col_info['bg'] = st.color_picker(
+                    f"BG_{i}", col_info['bg'], key=f"picker_bg_{i}", label_visibility="collapsed"
+                )
             
-            # Botón de descarga
-            result_buffer.seek(0)
-            st.download_button(
-                label="📥 Descargar archivo con formato",
-                data=result_buffer.getvalue(),
-                file_name="PrettySheet_Procesado.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-elif not ExcelPipeline:
-    st.warning("⚠️ El motor de procesamiento (ExcelPipeline) no está cargado.")
+            with c4:
+                # Selector de fuente
+                col_info['txt'] = st.color_picker(
+                    f"TXT_{i}", col_info['txt'], key=f"picker_txt_{i}", label_visibility="collapsed"
+                )
+        st.write("") # Espaciado entre filas
+
+    # --- ACCIÓN FINAL ---
+    st.divider()
+    
+    if ExcelPipeline:
+        if st.button("🚀 Procesar y Generar Excel", type="primary", use_container_width=True):
+            with st.spinner("Generando formato profesional..."):
+                file_bytes = BytesIO(uploaded_file.getvalue())
+                
+                # Preparar datos para el Pipeline
+                final_order = [c['name'] for c in st.session_state.column_data]
+                final_configs = {
+                    c['name']: {
+                        "bg_color": c['bg'].replace("#", ""),
+                        "txt_color": c['txt'].replace("#", "")
+                    } for c in st.session_state.column_data
+                }
+
+                pipeline = ExcelPipeline(
+                    column_order=final_order,
+                    column_configs=final_configs
+                )
+                
+                result_buffer = pipeline.process(file_bytes)
+                result_buffer.seek(0)
+                
+                # Mostrar éxito y descarga
+                st.success("¡Archivo procesado con éxito!")
+                
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    df_preview = pd.read_excel(result_buffer)
+                    st.write("📊 Vista previa rápida:")
+                    st.dataframe(df_preview.head(5), use_container_width=True)
+                
+                with col_d2:
+                    st.write("💾 Guardar resultado:")
+                    result_buffer.seek(0)
+                    st.download_button(
+                        label="📥 Descargar Excel Formateado",
+                        data=result_buffer.getvalue(),
+                        file_name=f"Pretty_{uploaded_file.name}",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+    else:
+        st.error("⚠️ Error: No se pudo cargar el motor `ExcelPipeline`. Revisa la carpeta `core`.")
+
 else:
-    st.info("👋 Carga un archivo Excel para comenzar.")
+    # Pantalla de bienvenida
+    st.info("👋 ¡Bienvenido! Por favor, carga un archivo Excel arriba para comenzar a personalizarlo.")
+    
+    # Ejemplo visual de qué hace la app
+    st.image("https://img.icons8.com/clouds/200/microsoft-excel.png", width=100)
+    st.write("Con PrettySheet puedes:")
+    st.write("- ↕️ Reordenar columnas sin tocar el Excel original.")
+    st.write("- 🎨 Asignar colores corporativos a cada encabezado.")
+    st.write("- 📏 Ajustar anchos de celda automáticamente.")

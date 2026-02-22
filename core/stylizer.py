@@ -1,46 +1,38 @@
 from openpyxl import load_workbook
-import openpyxl
 from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
 from io import BytesIO
 
 class Stylizer:
     @staticmethod
-    def style_excel(input_buffer, column_configs, txt_color):
+    def style_excel(input_buffer, column_configs, font_color_unused=None):
         import openpyxl
-        from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
-        
         wb = openpyxl.load_workbook(input_buffer)
         ws = wb.active
         
-        # Limpieza del color de texto
-        txt_color = str(txt_color).replace("#", "")
-        header_font = Font(color=txt_color, bold=True, size=12)
         thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
                             top=Side(style='thin'), bottom=Side(style='thin'))
 
-        # Iterar sobre las celdas del encabezado
         for cell in ws[1]:
-            col_name = str(cell.value).strip() # Limpiamos espacios
+            col_name = str(cell.value).strip()
             
-            # Buscamos el color en el diccionario
             if col_name in column_configs:
-                bg_hex = column_configs[col_name]["bg_color"].replace("#", "")
-                cell.fill = PatternFill(start_color=bg_hex, end_color=bg_hex, fill_type="solid")
-            else:
-                # Color gris por defecto si no lo encuentra
-                cell.fill = PatternFill(start_color="333333", end_color="333333", fill_type="solid")
+                # Extraemos ambos colores específicos de la columna
+                bg = column_configs[col_name]["bg_color"]
+                txt = column_configs[col_name]["txt_color"]
+                
+                cell.fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+                cell.font = Font(color=txt, bold=True, size=12)
             
-            cell.font = header_font
             cell.border = thin_border
-            cell.alignment = Alignment(horizontal="center")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
 
-        # Zebra striping and borders
-        zebra_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        # Cebra (opcional: puedes usar un gris muy suave para no chocar con los colores)
+        zebra = PatternFill(start_color="F9F9F9", end_color="F9F9F9", fill_type="solid")
+        for row in ws.iter_rows(min_row=2):
             for cell in row:
                 cell.border = thin_border
-                if (cell.row % 2) == 0:
-                    cell.fill = zebra_fill
+                if cell.row % 2 == 0:
+                    cell.fill = zebra
 
         output = BytesIO()
         wb.save(output)
