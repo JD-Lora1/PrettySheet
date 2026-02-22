@@ -1,0 +1,27 @@
+name: Deploy PrettySheet
+
+on:
+  push:
+    branches: [ main ]  # Se activa cada vez que subes algo a la rama main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generar el empaquetado (dist)
+        run: |
+          python empaquetar.py
+
+      - name: Subir a GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: dist    # La carpeta que el robot va a publicar
+          branch: gh-pages # La rama donde se guardará el HTML
