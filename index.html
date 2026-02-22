@@ -1,0 +1,299 @@
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>PrettySheet 🎨</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/mountable@0.75.0/build/stlite.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@stlite/mountable@0.75.0/build/stlite.js"></script>
+    <script>
+      stlite.mount({
+        requirements: ["pandas", "openpyxl", "streamlit-sortables"],
+        files: {
+          "app.py": `import streamlit as st
+import pandas as pd
+from io import BytesIO
+from streamlit_sortables import sort_items
+# Importaciones directas (asumiendo que están en la misma carpeta o subcarpeta core)
+from core.formatter_pipeline import ExcelPipeline 
+
+# Configuración de página
+st.set_page_config(page_title="PrettySheet", layout="wide")
+
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("Configuración")
+    apply_styles = st.checkbox("Aplicar Estilos", value=True)
+    adjust_widths = st.checkbox("Ajustar Anchos", value=True)
+    reorder_cols = st.checkbox("Reordenar Columnas", value=True)
+    
+    st.divider()
+    st.info("🚀 **Local-First**: Tus datos se procesan en tu navegador y nunca viajan a un servidor.")
+
+# --- CUERPO PRINCIPAL ---
+st.title("PrettySheet: Procesador Local de Excel")
+st.caption("Dale un acabado profesional a tus Excels en segundos.")
+
+uploaded_file = st.file_uploader("Arrastra tu archivo Excel (.xlsx)", type="xlsx")
+
+st.subheader("Personalización de Estilo")
+col1, col2 = st.columns(2)
+
+with col1:
+    primary_color = st.color_picker("Color de Encabezado", "#1F4E78")
+with col2:
+    font_color = st.color_picker("Color de Texto", "#FFFFFF")
+
+# Previsualización rápida con Markdown/HTML
+st.markdown(
+    f"""
+    <div style="
+        background-color: {primary_color}; 
+        color: {font_color}; 
+        padding: 10px; 
+        border-radius: 5px; 
+        text-align: center;
+        font-weight: bold;
+        border: 1px solid #ddd;
+    ">
+        VISTA PREVIA DEL ENCABEZADO
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
+
+if uploaded_file and ExcelPipeline:
+    # 1. PRIMERO: Leer el archivo para obtener los headers
+    file_bytes = BytesIO(uploaded_file.getvalue())
+    file_bytes.seek(0)
+    df_headers = pd.read_excel(file_bytes, nrows=0)
+    headers = list(df_headers.columns)
+
+    # 2. SEGUNDO: Configuración de Colores (Ahora que ya tenemos 'headers')
+    st.subheader("Configuración de Columnas")
+    column_configs = {}
+
+    with st.expander("🎨 Personalizar colores por columna"):
+        cols_ui = st.columns(3) 
+        for i, col_name in enumerate(headers):
+            with cols_ui[i % 3]:
+                # Usamos un color por defecto inicial
+                color = st.color_picker(f"Color: {col_name}", "#1F4E78", key=f"cp_{col_name}")
+                column_configs[col_name] = {"bg_color": color.lstrip('#')}
+
+    # 3. TERCERO: Reordenar columnas
+    column_order = None
+    if reorder_cols:
+        st.subheader("Arrastra para reordenar las columnas:")
+        
+        # --- TRUCO CSS PARA COLORES DINÁMICOS ---
+        # Esto genera estilos CSS para cada item del sortable basado en tus color_pickers
+        css_colors = ""
+        for col_name, config in column_configs.items():
+            bg = f"#{config['bg_color']}"
+            # Usamos selectores de texto para pintar las cajas del sortable
+            css_colors += f"""
+            div[data-testid="stMarkdownContainer"] p:contains("{col_name}") {{
+                background-color: {bg} !important;
+                color: {font_color} !important;
+                padding: 5px 10px;
+                border-radius: 5px;
+            }}
+            """
+        st.markdown(f"<style>{css_colors}</style>", unsafe_allow_html=True)
+        
+        column_order = sort_items(headers, direction="vertical", key="sortable_col_order")
+    else:
+        # Si no reordenan, el orden es el original de los headers
+        column_order = headers
+
+    # 4. CUARTO: Procesamiento
+    if st.button("Procesar y Previsualizar"):
+        with st.spinner("Procesando..."):
+            file_bytes.seek(0)
+            
+            # LIMPIEZA CRÍTICA: Asegurar que no haya '#' en ningún color
+            clean_configs = {
+                col: {"bg_color": cfg["bg_color"].replace("#", "")} 
+                for col, cfg in column_configs.items()
+            }
+            clean_font_color = font_color.replace("#", "") # <--- Esto faltaba
+
+            pipeline = ExcelPipeline(
+                column_order=column_order,
+                column_configs=clean_configs,
+                font_color=clean_font_color
+            )
+                
+            result_buffer = pipeline.process(file_bytes)
+            result_buffer.seek(0)
+            
+            # Vista previa
+            df_preview = pd.read_excel(result_buffer)
+            st.subheader("Vista previa (primeras 5 filas):")
+            st.dataframe(df_preview.head(5), use_container_width=True)
+            
+            # Botón de descarga
+            result_buffer.seek(0)
+            st.download_button(
+                label="📥 Descargar archivo con formato",
+                data=result_buffer.getvalue(),
+                file_name="PrettySheet_Procesado.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+elif not ExcelPipeline:
+    st.warning("⚠️ El motor de procesamiento (ExcelPipeline) no está cargado.")
+else:
+    st.info("👋 Carga un archivo Excel para comenzar.")`,
+"core/formatter_pipeline.py": `from io import BytesIO
+from core.column_reorderer import ColumnReorderer
+from core.stylizer import Stylizer
+from core.width_adjuster import WidthAdjuster
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
+class ExcelPipeline:
+    def __init__(self, column_order=None, column_configs=None, font_color="FFFFFF"):
+        self.column_order = column_order
+        self.column_configs = column_configs or {} # Diccionario {col_name: {bg_color: ...}}
+        self.font_color = font_color
+
+    def process(self, input_buffer: BytesIO) -> BytesIO:
+        buf = input_buffer
+        
+        # 1. Reordenar primero es vital para que el Stylizer encuentre las celdas
+        if self.column_order:
+            buf = ColumnReorderer.reorder_columns(buf, self.column_order)
+        
+        # 2. Estilizar con el diccionario de configuraciones
+        buf = Stylizer.style_excel(buf, self.column_configs, self.font_color)
+        
+        # 3. Ajustar anchos
+        buf = WidthAdjuster.adjust_widths(buf, 8, 40)
+        
+        return buf`,
+"core/column_reorderer.py": `import pandas as pd
+from io import BytesIO
+
+class ColumnReorderer:
+    @staticmethod
+    def reorder_columns(input_buffer: BytesIO, columns: list) -> BytesIO:
+        """
+        Reorders columns in the Excel file (in-memory) according to the provided list.
+        Columns not in the list are appended at the end in their original order.
+        Args:
+            input_buffer (BytesIO): Input Excel file in memory.
+            columns (list): Desired column order.
+        Returns:
+            BytesIO: Excel file with columns reordered.
+        """
+        input_buffer.seek(0)
+        df = pd.read_excel(input_buffer)
+        # Columns in the provided list
+        ordered = [col for col in columns if col in df.columns]
+        # Columns not in the provided list
+        remaining = [col for col in df.columns if col not in columns]
+        new_order = ordered + remaining
+        df = df[new_order]
+        output_buffer = BytesIO()
+        df.to_excel(output_buffer, index=False)
+        output_buffer.seek(0)
+        return output_buffer
+`,
+"core/width_adjuster.py": `from openpyxl import load_workbook
+from io import BytesIO
+
+class WidthAdjuster:
+    @staticmethod
+    def adjust_widths(input_buffer: BytesIO, min_width: int = 8, max_width: int = 40) -> BytesIO:
+        """
+        Adjusts column widths based on cell content, with min/max width constraints.
+        Args:
+            input_buffer (BytesIO): Input Excel file in memory.
+            min_width (int): Minimum column width.
+            max_width (int): Maximum column width.
+        Returns:
+            BytesIO: Excel file with adjusted column widths.
+        """
+        input_buffer.seek(0)
+        wb = load_workbook(input_buffer)
+        ws = wb.active
+        for col in ws.columns:
+            max_length = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                try:
+                    value = str(cell.value) if cell.value is not None else ''
+                except Exception:
+                    value = ''
+                max_length = max(max_length, len(value))
+            # Add a little extra space
+            width = min(max_width, max(min_width, max_length + 2))
+            ws.column_dimensions[col_letter].width = width
+        output_buffer = BytesIO()
+        wb.save(output_buffer)
+        output_buffer.seek(0)
+        wb.close()
+        return output_buffer
+`,
+"core/stylizer.py": `from openpyxl import load_workbook
+import openpyxl
+from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
+from io import BytesIO
+
+class Stylizer:
+    @staticmethod
+    def style_excel(input_buffer, column_configs, txt_color):
+        import openpyxl
+        from openpyxl.styles import PatternFill, Font, Border, Side, Alignment
+        
+        wb = openpyxl.load_workbook(input_buffer)
+        ws = wb.active
+        
+        # Limpieza del color de texto
+        txt_color = str(txt_color).replace("#", "")
+        header_font = Font(color=txt_color, bold=True, size=12)
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                            top=Side(style='thin'), bottom=Side(style='thin'))
+
+        # Iterar sobre las celdas del encabezado
+        for cell in ws[1]:
+            col_name = str(cell.value).strip() # Limpiamos espacios
+            
+            # Buscamos el color en el diccionario
+            if col_name in column_configs:
+                bg_hex = column_configs[col_name]["bg_color"].replace("#", "")
+                cell.fill = PatternFill(start_color=bg_hex, end_color=bg_hex, fill_type="solid")
+            else:
+                # Color gris por defecto si no lo encuentra
+                cell.fill = PatternFill(start_color="333333", end_color="333333", fill_type="solid")
+            
+            cell.font = header_font
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center")
+
+        # Zebra striping and borders
+        zebra_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for cell in row:
+                cell.border = thin_border
+                if (cell.row % 2) == 0:
+                    cell.fill = zebra_fill
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return output
+`
+        },
+        entrypoint: "app.py",
+      }, document.getElementById("root"));
+    </script>
+  </body>
+</html>
